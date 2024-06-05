@@ -3,10 +3,9 @@
 
 AC_PREREQ(2.69)
 AC_INIT([libisal_crypto],
-        [2.24.0],
-        [sg.support.isal@intel.com],
-        [isa-l_crypto],
-        [http://01.org/storage-acceleration-library])
+        [2.25.0],
+        [https://github.com/intel/isa-l_crypto/issues],
+        [isa-l_crypto])
 AC_CONFIG_SRCDIR([])
 AC_CONFIG_AUX_DIR([build-aux])
 AM_INIT_AUTOMAKE([
@@ -64,6 +63,13 @@ AS_IF([test "x$enable_debug" = "xyes"], [
         AC_DEFINE(ENABLE_DEBUG, [1], [Debug messages.])
 ])
 
+AC_ARG_ENABLE([fips-mode],
+        AS_HELP_STRING([--enable-fips-mode], [enable FIPS mode @<:@default=disabled@:>@]),
+        [enable_fips_mode=yes], [enable_fips_mode=no])
+AS_IF([test "x$enable_fips_mode" = "xyes"], [
+        AC_DEFINE(FIPS_MODE, [1], [FIPS mode.])
+])
+
 AC_ARG_ENABLE([safe-data],
         AS_HELP_STRING([--disable-safe-data], [clear sensitive data @<:@default=enabled@:>@]),
         [safe_data=no], [safe_data=yes])
@@ -99,7 +105,7 @@ if test x"$CPU" = x"aarch64"; then
    fi
 fi
 
-# If this build is for x86, look for yasm and nasm
+# If this build is for x86, look for nasm
 if test x"$is_x86" = x"yes"; then
   AC_MSG_CHECKING([whether Intel CET is enabled])
   AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[]], [[
@@ -129,57 +135,8 @@ int main(int argc, char **argv)
                LDFLAGS=""]
 )
 
-  # Pick an assembler yasm or nasm
+  # Pick NASM assembler
   if test x"$AS" = x""; then
-    # Check for yasm and yasm features
-    yasm_feature_level=0
-    AC_CHECK_PROG(HAVE_YASM, yasm, yes, no)
-    if test "$HAVE_YASM" = "yes"; then
-       yasm_feature_level=1
-    else
-       AC_MSG_RESULT([no yasm])
-    fi
-    if test x"$yasm_feature_level" = x"1"; then
-       AC_MSG_CHECKING([for modern yasm])
-       AC_LANG_CONFTEST([AC_LANG_SOURCE([[vmovdqa %xmm0, %xmm1;]])])
-       if yasm -f elf64 -p gas conftest.c ; then
-         AC_MSG_RESULT([yes])
-         yasm_feature_level=4
-       else
-         AC_MSG_RESULT([no])
-       fi
-    fi
-    if test x"$yasm_feature_level" = x"4"; then
-       AC_MSG_CHECKING([for optional yasm AVX512 support])
-       AC_LANG_CONFTEST([AC_LANG_SOURCE([[vpshufb %zmm0, %zmm1, %zmm2;]])])
-       if yasm -f elf64 -p gas conftest.c 2> /dev/null; then
-         AC_MSG_RESULT([yes])
-         yasm_feature_level=6
-       else
-         AC_MSG_RESULT([no])
-       fi
-    fi
-    if test x"$yasm_feature_level" = x"6"; then
-      AC_MSG_CHECKING([for additional yasm AVX512 support])
-      AC_LANG_CONFTEST([AC_LANG_SOURCE([[vpcompressb zmm0, k1, zmm1;]])])
-      sed -i -e '/vpcompressb/!d' conftest.c
-      if yasm -f elf64  conftest.c 2> /dev/null; then
-        AC_MSG_RESULT([yes])
-        yasm_feature_level=10
-      else
-        AC_MSG_RESULT([no])
-      fi
-    fi
-
-    AC_MSG_CHECKING([for optional yasm SHA-NI support])
-    AC_LANG_CONFTEST([AC_LANG_SOURCE([[sha256rnds2 %xmm0,%xmm1,%xmm2;]])])
-    if yasm -f elf64 -p gas conftest.c 2> /dev/null; then
-      yasm_knows_shani=yes
-      AC_MSG_RESULT([yes])
-    else
-      AC_MSG_RESULT([no])
-    fi
-
     # Check for nasm and nasm features
     nasm_feature_level=0
     AC_CHECK_PROG(HAVE_NASM, nasm, yes, no)
@@ -223,25 +180,8 @@ int main(int argc, char **argv)
       fi
     fi
 
-    AC_MSG_CHECKING([for optional nasm SHA-NI support])
-    AC_LANG_CONFTEST([AC_LANG_SOURCE([[sha256rnds2 xmm2,xmm1,xmm0;]])])
-    sed -i -e '/sha256rnds2/!d' conftest.c
-    if nasm -f elf64  conftest.c 2> /dev/null; then
-      nasm_knows_shani=yes
-      AC_MSG_RESULT([yes])
-    else
-      AC_MSG_RESULT([no])
-    fi
-
-    if test $nasm_feature_level -ge $yasm_feature_level ; then
-      AS=nasm
-      as_feature_level=$nasm_feature_level
-      as_knows_shani=$nasm_knows_shani
-    else
-      AS=yasm
-      as_feature_level=$yasm_feature_level
-      as_knows_shani=$yasm_knows_shani
-    fi
+    AS=nasm
+    as_feature_level=$nasm_feature_level
 
   else
     # Check for $AS supported features
@@ -299,8 +239,8 @@ int main(int argc, char **argv)
 
   fi
 
-  if test $as_feature_level -lt 2 ; then
-    AC_MSG_ERROR([No modern nasm or yasm found as required. Nasm should be v2.11.01 or later (v2.13 for AVX512) and yasm should be 1.2.0 or later.])
+  if test $as_feature_level -lt 10 ; then
+    AC_MSG_ERROR([No modern nasm found as required. Nasm should be v2.14.01 or later.])
   fi
 
   if test x"$as_knows_shani" = x"yes"; then
@@ -311,21 +251,12 @@ int main(int argc, char **argv)
   fi
 
   case $host_os in
-       *linux*)  arch=linux   yasm_args="-f elf64";;
-       *darwin*) arch=darwin  yasm_args="-f macho64 --prefix=_ ";;
-       *netbsd*) arch=netbsd  yasm_args="-f elf64";;
-       *mingw*)  arch=mingw   yasm_args="-f win64";;
-       *)        arch=unknown yasm_args="-f elf64";;
+       *linux*)  arch=linux   asm_args="-f elf64";;
+       *darwin*) arch=darwin  asm_args="-f macho64 --prefix=_ ";;
+       *netbsd*) arch=netbsd  asm_args="-f elf64";;
+       *mingw*)  arch=mingw   asm_args="-f win64";;
+       *)        arch=unknown asm_args="-f elf64";;
   esac
-
-  # Fix for nasm missing windows features
-  if test x"$arch" = x"mingw"; then
-    AS=yasm
-    as_feature_level=$yasm_feature_level
-    if test $as_feature_level -lt 2 ; then
-      AC_MSG_ERROR([Mingw build requires Yasm 1.2.0 or later.])
-    fi
-  fi
 
   AC_DEFINE_UNQUOTED(AS_FEATURE_LEVEL, [$as_feature_level], [Assembler feature level.])
   if test $as_feature_level -ge 6 ; then
@@ -336,17 +267,17 @@ int main(int argc, char **argv)
   fi
 
   AM_CONDITIONAL(SAFE_DATA, test x"$SAFE_DATA" = x"yes")
-  AM_CONDITIONAL(USE_YASM, test x"$AS" = x"yasm")
+  AM_CONDITIONAL(FIPS_MODE, test x"$FIPS_MODE" = x"yes")
   AM_CONDITIONAL(USE_NASM, test x"$AS" = x"nasm")
   AM_CONDITIONAL(WITH_AVX512, test x"$have_as_knows_avx512" = x"yes")
   AM_CONDITIONAL(WITH_SHANI, test x"$have_as_knows_shani" = x"yes")
-  AC_SUBST([yasm_args])
+  AC_SUBST([asm_args])
   AM_CONDITIONAL(DARWIN, test x"$arch" = x"darwin")
-  AC_MSG_RESULT([Using $AS args target "$arch" "$yasm_args"])
+  AC_MSG_RESULT([Using $AS args target "$arch" "$asm_args"])
 else
   # Disable below conditionals if not x86
   AM_CONDITIONAL(SAFE_DATA, test "x" = "y")
-  AM_CONDITIONAL(USE_YASM, test "x" = "y")
+  AM_CONDITIONAL(FIPS_MODE, test "x" = "y")
   AM_CONDITIONAL(USE_NASM, test "x" = "y")
   AM_CONDITIONAL(WITH_AVX512, test "x" = "y")
   AM_CONDITIONAL(WITH_SHANI, test "x" = "y")
@@ -370,6 +301,7 @@ AC_CHECK_FUNCS([memmove memset])
 
 my_CFLAGS="\
 -Wall \
+-fPIC \
 -Wchar-subscripts \
 -Wformat-security \
 -Wnested-externs \
@@ -378,7 +310,8 @@ my_CFLAGS="\
 -Wstrict-prototypes \
 -Wtype-limits \
 -fstack-protector \
--D_FORTIFY_SOURCE=2
+-D_FORTIFY_SOURCE=2 \
+-DNO_COMPAT_ISAL_CRYPTO_API_2_24
 "
 AC_SUBST([my_CFLAGS])
 
@@ -404,4 +337,5 @@ AC_MSG_RESULT([
         debug:                  ${enable_debug}
         safe_data:              ${safe_data}
         safe_param:             ${safe_param}
+        FIPS mode:              ${enable_fips_mode}
 ])

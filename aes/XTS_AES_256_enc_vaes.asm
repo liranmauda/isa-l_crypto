@@ -36,28 +36,26 @@
 %include "reg_sizes.asm"
 %include "clear_regs.inc"
 
-%if (AS_FEATURE_LEVEL) >= 10
-
 default rel
 %define TW              rsp     ; store 8 tweak values
 %define keys    rsp + 16*8      ; store 15 expanded keys
 
 %ifidn __OUTPUT_FORMAT__, win64
-	%define _xmm    rsp + 16*23     ; store xmm6:xmm15
+	%define _xmm    rsp + 16*(8+15)     ; store xmm6:xmm15
 %endif
 
 %ifidn __OUTPUT_FORMAT__, elf64
-%define _gpr    rsp + 16*23     ; store rbx
+%define _gpr    rsp + 16*(8+15)     ; store rbx
 %define VARIABLE_OFFSET 16*8 + 16*15 + 8*1     ; VARIABLE_OFFSET has to be an odd multiple of 8
 %else
-%define _gpr    rsp + 16*33     ; store rdi, rsi, rbx
+%define _gpr    rsp + 16*(8+15+10)     ; store rdi, rsi, rbx
 %define VARIABLE_OFFSET 16*8 + 16*15 + 16*10 + 8*3     ; VARIABLE_OFFSET has to be an odd multiple of 8
 %endif
 
 %define GHASH_POLY 0x87
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;void XTS_AES_256_enc_avx(
+;void _XTS_AES_256_enc_vaes(
 ;               UINT8 *k2,      // key used for tweaking, 16*2 bytes
 ;               UINT8 *k1,      // key used for "ECB" encryption, 16*2 bytes
 ;               UINT8 *TW_initial,      // initial tweak value, 16 bytes
@@ -1135,8 +1133,8 @@ default rel
 
 section .text
 
-mk_global XTS_AES_256_enc_vaes, function
-XTS_AES_256_enc_vaes:
+mk_global _XTS_AES_256_enc_vaes, function, internal
+_XTS_AES_256_enc_vaes:
 	endbranch
 
 %define ALIGN_STACK
@@ -1496,6 +1494,12 @@ _steal_cipher:
 _ret_:
 %ifdef SAFE_DATA
         clear_all_zmms_asm
+        ; Clear expanded keys (16*15 bytes)
+        vmovdqa64       [keys], zmm0
+        vmovdqa64       [keys + 4*16], zmm0
+        vmovdqa64       [keys + 8*16], zmm0
+        vmovdqa64       [keys + 12*16], ymm0
+        vmovdqa64       [keys + 14*16], xmm0
 %else
         vzeroupper
 %endif
@@ -1689,10 +1693,3 @@ const_dq7654: dq 4, 4, 5, 5, 6, 6, 7, 7
 const_dq1234: dq 4, 4, 3, 3, 2, 2, 1, 1
 
 shufb_15_7: db 15, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 7, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff
-
-%else  ; Assembler doesn't understand these opcodes. Add empty symbol for windows.
-%ifidn __OUTPUT_FORMAT__, win64
-global no_XTS_AES_256_enc_vaes
-no_XTS_AES_256_enc_vaes:
-%endif
-%endif ; (AS_FEATURE_LEVEL) >= 10
